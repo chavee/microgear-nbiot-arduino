@@ -67,10 +67,10 @@ char data[100];
 mg.setExternalBuffer(data, 100);
 ```
 
-3. เราสามารถตามเข้าไปปรับแต่งค่าในไฟล์​bc95udp/settings.h ได้อีกด้วย 
+3. เราสามารถตามเข้าไปปรับแต่งค่าการทำงานในระดับที่ลึกลงไปอีกได้ในไฟล์ settings.h
 
 ```
-#define DATA_BUFFER_SIZE                128
+#define DATA_BUFFER_SIZE                160
 
 #define BC95_USE_EXTERNAL_BUFFER        1
 #define BC95_PRINT_DEBUG                0
@@ -82,12 +82,16 @@ mg.setExternalBuffer(data, 100);
 #define BC95UDP_SERIAL_READ_CHUNK_SIZE  7
 #define BC95UDP_BUFFER_SIZE             DATA_BUFFER_SIZE
 
+#define DNS_CACHE_SLOT                  1
+#define DNS_CACHE_SIZE                  24
+#define DNS_CACHE_EXPIRE_MS             0
 #define DNS_MAX_RETRY                   5
 #define DNS_DEFAULT_SERVER              IPAddress(8,8,8,8)
 
 #define NTP_DEFAULT_SERVER              "time.nist.gov"
 
-#define COAP_ENABLE_ACK_CALLBACK        0
+#define COAP_ENABLE_ACK_CALLBACK        1
+#define COAP_CONFIRMABLE                0
 ```
 
 ## ตัวอย่างโค้ดบน Arduino UNO
@@ -113,20 +117,24 @@ char payload[32];
 void setup() {
     bc95serial.begin(9600);
     BC95.begin(bc95serial);
-
-    Serial.begin(9600);
-    Serial.println(F("Starting..."));
-
     BC95.reset();
+    
+    Serial.begin(9600);
+    Serial.println(F("Microgear Arduino NB-IoT Start!"));
+    Serial.print(F("IMEI: "));
     Serial.println(BC95.getIMEI());
+    Serial.print(F("IMSI: "));
     Serial.println(BC95.getIMSI());
 
+    Serial.print(F("Attach Network..."));
     while (!BC95.attachNetwork()) {
-        Serial.println("...");
+        Serial.print(".");
         delay(1000);
     }
-    Serial.println(F("NB-IOT attached\n RSSI:"));
+    Serial.println(F("\nNB-IOT attached!"));
+    Serial.print(F("RSSI: "));
     Serial.println(BC95.getSignalStrength());
+    Serial.print(F("IPAddress: "));
     Serial.println(BC95.getIPAddress());
 
     mg.init(APPID, KEY, SECRET);
@@ -134,149 +142,10 @@ void setup() {
 }
 
 void loop() {
-    mg.publish("/nbsensor2/rssi", BC95.getSignalStrength());
+    mSerial.print(F("Sent Signal Strength: "));
+    Serial.println(BC95.getSignalStrength());
+    mg.publish("/nbiot/rssi", BC95.getSignalStrength());
     mg.loop();
     delay(5000);
 }
-```
-
-MicrogearNB library มาพร้อมกับ BC95UDP module ซึ่งถูก implement จาก UDP abstract class มาตรฐานของ Arduino จึงสามารถนำไปใช้งานร่วมกับ UDP library อื่นๆของ Arduino ได้ไม่ยาก ตัวอย่างการส่ง raw UDP data ไปยัง DNS server ของ Google ซึ่งมี IP address เป็น 8.8.8.8
-
-```C++
-#include <Arduino.h>
-#include <AltSoftSerial.h>
-#include "BC95Udp.h"
-
-AltSoftSerial bc95serial;
-
-#define SERVER_IP     IPAddress(8, 8, 8, 8)
-#define SERVER_PORT   53
-
-// This binary string represents a UDP paylaod of the DNS query for the domain name nexpie.com
-uint8_t udpdata[] = "\xC0\x5B\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x06\x6E\x65\x78\x70\x69\x65\x03\x63\x6F\x6D\x00\x00\x01\x00\x01";
-
-BC95UDP udpclient;
-uint8_t buff[64];
-
-void printHEX(uint8_t *buff, size_t len) {
-    for (int i=0; i<len; i++) {
-        if (buff[i]<16) Serial.print(" 0");
-        else Serial.print(" ");
-        Serial.print(buff[i], HEX);
-    }
-}
-
-void setup() {
-    bc95serial.begin(9600);
-    BC95.begin(bc95serial);
-    BC95.reset();
-
-    Serial.begin(9600);
-    while (!BC95.attachNetwork()) {
-        Serial.println("...");
-        delay(1000);
-    }
-
-    udpclient.begin(8053);
-    udpclient.beginPacket(SERVER_IP, SERVER_PORT);    
-    udpclient.write(udpdata, 28);
-    udpclient.endPacket();
-
-    while (udpclient.parsePacket() == 0) {
-        delay(500);
-    }
-
-    size_t len = udpclient.read(buff, 64);
-
-    Serial.println(F("\n\nReceive UDP payload : "));
-    printHEX(buff, len);
-}
-
-void loop() {
-  
-}
-
-```
-
-MicrogearNB library ยังมาพร้อมกับฟีเจอร์ DNS สำหรับการ resolve domain name อัตโนมัติผ่าน NB-IOT ซึ่งเราสามารถใช้ hostname แทน IP address ใน UDP API ได้เลย เช่น
-
-```C++
-udpclient.beginPacket("coap.server.com", 5683);  
-```
-
-แต่เพื่อให้เกิดการใช้ memory อย่างมีประสิทธิภาพ ซึ่งสำคัญมากกับบอร์ดที่มี memory น้อยอย่างเช่น UNO จึงขอแนะนำให้ resolve IP ก่อนจึงค่อยนำไปใช้งาน แบบในโค้ดต่อไปนี้
-
-```C++
-#include <Arduino.h>
-#include <AltSoftSerial.h>
-#include "Dns.h"
-
-AltSoftSerial bc95serial;
-
-DNSClient dns;
-IPAddress remoteip;
-
-void setup() {
-    bc95serial.begin(9600);
-    BC95.begin(bc95serial);
-    BC95.reset();
-
-    Serial.begin(9600);
-    Serial.println(F("Starting..."));
-
-    while (!BC95.attachNetwork()) {
-        Serial.println("...");
-        delay(1000);
-    }
-    Serial.println(F("NB-IOT attached.."));
-
-    dns.begin();
-    dns.getHostByName("google.com", remoteip);
-
-    Serial.print("The resolved IP address is : ");
-    Serial.println(remoteip);
-}
-
-void loop() {
-  
-}
-
-```
-
-นอกจาก DNS และ CoAP แล้ว เรายังสามารถส่งโปรโตโคล NTP sync เวลากับ time server ผ่าน NB-IOT ได้อีกด้วย ตามตัวอย่างนี้
-
-```C++
-#include <Arduino.h>
-#include <AltSoftSerial.h>
-#include "NTPClient.h"
-
-AltSoftSerial bc95serial;
-
-BC95UDP udp;
-NTPClient ntpclient(udp);
-
-void setup() {
-    bc95serial.begin(9600);
-    BC95.begin(bc95serial);
-    BC95.reset();
-
-    Serial.begin(9600);
-    Serial.println(F("Starting..."));
-
-    while (!BC95.attachNetwork()) {
-        Serial.println("...");
-        delay(1000);
-    }
-    Serial.println(F("NB-IOT attached.."));
-
-    ntpclient.begin();
-    ntpclient.update();
-    Serial.print("The current GMT time is : ");
-    Serial.println(ntpclient.getFormattedTime());
-}
-
-void loop() {
-  
-}
-
 ```
